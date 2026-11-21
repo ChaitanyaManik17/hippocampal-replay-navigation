@@ -6,6 +6,12 @@ Rutgers CS 525 Neural Computation. This repository starts with Chaitanya's maze 
 
 [Baseline report](baseline_report.md) · [Team integration contract](integration.md) · [Rollout data](baseline_evaluation.csv) · [Seed-level summary](baseline_summary.json)
 
+## Work in parallel
+
+The [parallel implementation plan](parallel_implementation_plan.md) gives each teammate a component, validation checks, evidence, and a report section. The [shareable PDF](Hippocampal_Replay_Parallel_Implementation_Plan.pdf) describes the same assignments.
+
+Run `python -m parallel_fixtures --check` and `python -m unittest test_parallel_fixtures -v` from the repository root. The fixture JSON includes recorded maze episodes, spike timing cases, and a scripted recall case. The stand-in agent and recall probe let the runner and evaluator pass standalone checks before the real model is connected.
+
 ## Run the demo
 
 Tested with Python 3.12 and CPU PyTorch on Linux (x86-64). The requirements file uses the PyTorch CPU wheel index.

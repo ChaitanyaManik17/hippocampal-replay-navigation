@@ -19,3 +19,34 @@ Use `maze.py` as the shared environment implementation. A teammate can wrap this
 ## Handoffs
 
 Ketan receives stable cue IDs and action order. Dwiti receives the transition schema and example runner. Charvi receives a paired rollout table, map phase labels, and the evaluation-only shortest-path helper. Use distinct output folders for new models or experimental conditions.
+
+## Parallel development contract v1
+
+See the [parallel implementation plan](parallel_implementation_plan.md) for owners and standalone acceptance.
+
+### Model and runner boundary
+
+Import `ReplayAgent` and `TraceAgent` from `parallel_fixtures.py`. `ReplayAgent` specifies:
+
+- `begin_episode()` clears transient state at a new independent episode while preserving learned weights.
+- `act(observation, training=...)` consumes the observed position ID and returns a cardinal action ID. Evaluation calls run on a separate model instance or with its transient and RNG state isolated from training.
+- `observe(transition)` is called after a real training action. The runner skips it during frozen evaluation.
+- `replay(sequence, step_ms=25)` runs one externally guided snippet using recorded position observations, actions, and rewards. Reset short-lived traces between independent snippets. Return control without making maze calls.
+- `rest(duration_ms)` advances the same simulated interval without learning. Replay updates and rest durations belong in separate offline logs.
+
+For fixture rows, convert the six transition fields into `maze.Transition`. Keep episode ID, phase, index, and collision as runner metadata. Sampling must preserve observed reward and termination flags. Use synthetic fixture episodes to test the sampler, then use the agent's actual recorded experience for live runs.
+
+### Memory probe boundary
+
+Import `RecallProbe` and `ScriptedRecall` from `parallel_fixtures.py`. A cue channel uses `4 * observation + local_channel`, with local channel in 0–3. Keep the codebook stable across maze phases. `recall(cue_channels, cue_ms=..., recall_bins=..., bin_ms=..., recurrence=...)` gets only the presented channels and timing settings. It returns one decoded position or `None` per bin after cue removal, without changing weights. Reset transient state for each probe.
+
+The evaluator keeps `expected_locations` private to scoring. The scripted variants have expected scores of 3/3, 0/3, and 2/3 respectively. They validate the evaluator before it gets real spikes.
+
+### Validate the starting point
+
+```bash
+python -m parallel_fixtures --check
+python -m unittest test_parallel_fixtures -v
+```
+
+These two commands require only Python and the repository. `python -m parallel_fixtures --write` regenerates the committed JSON after an intentional contract change.
