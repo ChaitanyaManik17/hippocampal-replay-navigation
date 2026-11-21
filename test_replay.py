@@ -3,12 +3,12 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from random import Random
 
-from experiment import evaluate
 from maze import GridMaze, Transition
 from parallel_fixtures import FIXTURE_PATH, TraceAgent
 from replay_runner import (
-    GuardedMaze, OfflineMazeAccess, ReplayRunConfig, audit, run, run_offline_session,
+    GuardedMaze, OfflineMazeAccess, ReplayRunConfig, audit, evaluate_frozen, run, run_offline_session,
     trace_factory, train_condition,
 )
 from replay_scheduler import (
@@ -19,6 +19,34 @@ from replay_scheduler import (
 
 def fixture_buffer() -> ReplayBuffer:
     return ReplayBuffer.from_fixture(json.loads(FIXTURE_PATH.read_text(encoding="utf-8")))
+
+
+class RandomActionAgent:
+    """Stochastic stand-in: every act() draws from one RNG, so any evaluation
+    call on the training agent would shift all later training actions."""
+
+    def __init__(self, seed):
+        self.rng = Random(seed)
+        self.training_actions = []
+        self.begin_calls = 0
+
+    def begin_episode(self):
+        self.begin_calls += 1
+
+    def act(self, observation, *, training):
+        action = self.rng.randrange(4)
+        if training:
+            self.training_actions.append(action)
+        return action
+
+    def observe(self, transition):
+        pass
+
+    def replay(self, sequence, *, step_ms):
+        pass
+
+    def rest(self, duration_ms):
+        pass
 
 
 class StepTouchingAgent(TraceAgent):
@@ -159,7 +187,7 @@ class RunnerTests(unittest.TestCase):
         buffer.start_episode("x")
         buffer.record(Transition(8, 3, -0.005, 9, False, False), phase="original", map_id="loop-7x7-v1",
                       collision=False)
-        rows = list(evaluate(TraceAgent([3]), GridMaze("loop-7x7-v1", 0), "ordered", 0, "original", 0, 0))
+        rows = list(evaluate_frozen(TraceAgent([3]), GridMaze("loop-7x7-v1", 0), "ordered", 0, "original", 0, 0))
         self.assertEqual(len(rows), 3)
         self.assertEqual(len(buffer), 1)
 
@@ -192,6 +220,54 @@ class RunnerTests(unittest.TestCase):
             self.assertTrue(all(s["replayed_transitions"] == expected for s in sessions))
         # TraceAgent does not learn, so identical evaluations show replay never leaked into the maze.
         self.assertEqual(len({tuple(v) for v in evals.values()}), 1)
+
+    def test_evaluation_interval_does_not_change_training(self):
+        """Same seed, different checkpoint_every: the training action sequence must match."""
+        runs = {}
+        for every in (10, 25, 180):
+            for condition in MODES:
+                agent = RandomActionAgent(11)
+                rows = list(train_condition(agent, self.config(checkpoint_every=every), condition, 11,
+                                            log_rows=[], session_rows=[]))
+                self.assertTrue(rows)
+                runs[(every, condition)] = agent.training_actions
+        for condition in MODES:
+            sequences = {tuple(runs[(every, condition)]) for every in (10, 25, 180)}
+            self.assertEqual(len(sequences), 1, condition)
+            self.assertEqual(len(runs[(10, condition)]), 180)
+
+    def test_evaluation_uses_snapshot_and_resets_each_rollout(self):
+        agent = TraceAgent([3, 0, 1])
+        agent.begin_episode()
+        agent.act(8, training=True)  # mid-episode: cursor 1
+        events_before, cursor_before = list(agent.events), agent._cursor
+        rng_agent = RandomActionAgent(5)
+        rng_state = rng_agent.rng.getstate()
+        maze = GridMaze("loop-7x7-v1", 0, max_steps=10)
+        list(evaluate_frozen(agent, maze, "rest", 0, "original", 0, 0))
+        list(evaluate_frozen(rng_agent, maze, "rest", 0, "original", 0, 0))
+        self.assertEqual((agent.events, agent._cursor), (events_before, cursor_before))
+        self.assertEqual(rng_agent.rng.getstate(), rng_state)
+        self.assertEqual(rng_agent.begin_calls, 0)
+
+        class CountingCopy(RandomActionAgent):
+            made = []
+
+            def evaluation_copy(self):
+                clone = CountingCopy(0)
+                CountingCopy.made.append(clone)
+                return clone
+
+        list(evaluate_frozen(CountingCopy(1), maze, "rest", 0, "original", 0, 0))
+        self.assertEqual(len(CountingCopy.made), 1)
+        self.assertEqual(CountingCopy.made[0].begin_calls, len(maze.spec.starts))
+
+        class SameObject(RandomActionAgent):
+            def evaluation_copy(self):
+                return self
+
+        with self.assertRaises(RuntimeError):
+            list(evaluate_frozen(SameObject(1), maze, "rest", 0, "original", 0, 0))
 
     def test_blocked_phase_evaluates_before_training(self):
         rows = list(train_condition(trace_factory(49, 11), self.config(conditions=["rest"]), "rest", 11,

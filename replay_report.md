@@ -7,7 +7,7 @@ Evidence: `replay_audit/` (synthetic fixtures with `TraceAgent`). Nothing in thi
 
 Training alternates real maze actions with offline sessions. Every `replay_every` real actions, the runner pauses, asks the scheduler for a plan, and delivers it through `agent.replay(sequence, step_ms=...)` or `agent.rest(duration_ms)`. While a session runs, the training maze is wrapped by `GuardedMaze`, which raises `OfflineMazeAccess` on any `step` or `reset` and counts the attempt. After each session the runner calls `begin_episode()` and resets the maze. This happens in every condition, rest included, so the interruption is matched.
 
-Real experience goes into a `ReplayBuffer` organised by episode. Each entry is the six-field `maze.Transition` plus runner metadata (episode ID, time index, phase, map ID, collision). Evaluation goes through `experiment.evaluate` on a separate maze. It never calls `observe` and never writes to the buffer. On the route change, the runner builds a `blocked=True` maze, keeps the agent and buffer, and evaluates before the first blocked training action (phase step 0).
+Real experience goes into a `ReplayBuffer` organised by episode. Each entry is the six-field `maze.Transition` plus runner metadata (episode ID, time index, phase, map ID, collision). Evaluation runs on a separate maze *and* a separate agent. At each checkpoint the runner takes a snapshot of the training agent with its current weights: `agent.evaluation_copy()` if the model defines it, otherwise `copy.deepcopy(agent)`. It calls `begin_episode()` on the snapshot before every rollout. The training agent's weights, transient state and RNG are never touched, so the training action sequence for a seed does not depend on how often evaluation runs (`test_evaluation_interval_does_not_change_training` checks intervals of 10, 25 and 180 steps in all four conditions). Evaluation never calls `observe` and never writes to the buffer. Rows use the same schema as `experiment.evaluate`. On the route change, the runner builds a `blocked=True` maze, keeps the agent and buffer, and evaluates before the first blocked training action (phase step 0).
 
 ## Replay conditions
 
@@ -68,6 +68,6 @@ One session of six draws cannot show the priority effect. `replay_audit/audit.md
 ## Limitations
 
 - These results come from fixtures and a stand-in agent. Whether replay helps the spiking model has to be measured in the integrated runs.
-- Isolating evaluation state is the model's job. `experiment.evaluate` calls `begin_evaluation()` if the agent has it, but does not call `begin_episode()` per rollout.
+- A deep copy at every checkpoint is simple and safe, but it can be slow for a large network. The SNN can define `evaluation_copy()` to return a lighter frozen copy. It must return a separate object whose RNG and transient state are independent of the training agent's.
 - Uniform window sampling weights long episodes more because they have more windows. The same is true of the adaptive baseline before its priorities are applied.
 - Replay is forward-only. Reverse replay (Foster and Wilson, 2006) would be a natural extra condition.

@@ -18,13 +18,18 @@ Budget rules (identical for every condition):
   each lasts ``replay_transitions * step_ms`` simulated milliseconds.
 * After an offline session the runner starts a fresh training episode, in every
   condition including rest, so the interruption itself is matched.
-* Evaluation uses a separate maze, never calls ``observe`` and never writes
-  to the replay buffer.
+* Evaluation uses a separate maze and a separate agent: a snapshot of the
+  training agent taken at the checkpoint (``agent.evaluation_copy()`` if the
+  model provides it, else ``copy.deepcopy``). ``begin_episode()`` is called on
+  the snapshot before every rollout. The training agent's weights, transient
+  state and RNG are never touched, so training is identical for any
+  evaluation schedule. Evaluation never calls ``observe`` or writes the buffer.
 """
 
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import importlib
 import json
@@ -33,7 +38,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Iterator
 
-from experiment import EvaluationRow, evaluate
+from experiment import EvaluationRow, rollout
+from maze import shortest_distance
 from maze import MAPS, GridMaze, Transition
 from parallel_fixtures import FIXTURE_PATH, ReplayAgent, TraceAgent
 from replay_scheduler import (
@@ -202,6 +208,40 @@ class ReplayRunConfig:
 AgentFactory = Callable[[int, int], ReplayAgent]
 
 
+def evaluation_snapshot(agent: ReplayAgent) -> ReplayAgent:
+    """Separate evaluation agent carrying the current learned weights.
+
+    A model can define ``evaluation_copy()`` to build a lighter frozen copy
+    (for example, sharing read-only weight arrays). Otherwise the whole agent
+    is deep-copied, which also copies its RNG state, so draws made during
+    evaluation never advance the training agent's generator.
+    """
+    make_copy = getattr(agent, "evaluation_copy", None)
+    snapshot = make_copy() if make_copy is not None else copy.deepcopy(agent)
+    if snapshot is agent:
+        raise RuntimeError("evaluation_copy() must return a separate agent")
+    return snapshot
+
+
+def evaluate_frozen(
+    agent: ReplayAgent, maze: GridMaze, name: str, seed: int, phase: str,
+    phase_step: int, environment_step: int,
+) -> Iterator[EvaluationRow]:
+    """Frozen rollouts from every start on a snapshot; same rows as experiment.evaluate."""
+    evaluator = evaluation_snapshot(agent)
+    for start in maze.spec.starts:
+        optimal = shortest_distance(maze, start)
+        if optimal is None:
+            raise ValueError(f"goal unreachable from {start}")
+        evaluator.begin_episode()
+        success, steps, collisions = rollout(evaluator, maze, start)
+        yield EvaluationRow(
+            maze.spec.id, name, seed, phase, phase_step, environment_step,
+            f"{start[0]}:{start[1]}", int(success), steps, optimal,
+            optimal / steps if success else None, collisions,
+        )
+
+
 def trace_factory(num_observations: int, seed: int) -> ReplayAgent:
     """Deterministic stand-in: a fixed loop of moves that eventually reaches the loop-maze goal."""
     return TraceAgent([3, 3, 3, 3, 0, 1, 1, 3])
@@ -224,7 +264,7 @@ def train_condition(
         maze = GuardedMaze(GridMaze(config.map_id, seed, config.max_steps, blocked=blocked))
         eval_maze = GridMaze(config.map_id, seed, config.max_steps, blocked=blocked)
         # Evaluate the inherited policy before any training action on this map.
-        yield from evaluate(agent, eval_maze, condition, seed, phase, 0, environment_step)
+        yield from evaluate_frozen(agent, eval_maze, condition, seed, phase, 0, environment_step)
         episode = 0
 
         def new_episode() -> int:
@@ -258,7 +298,7 @@ def train_condition(
                 buffer.close_episode()
                 observation = new_episode()
             if phase_step % config.checkpoint_every == 0 or last:
-                yield from evaluate(agent, eval_maze, condition, seed, phase, phase_step, environment_step)
+                yield from evaluate_frozen(agent, eval_maze, condition, seed, phase, phase_step, environment_step)
 
 
 def load_factory(spec: str) -> AgentFactory:
