@@ -1,0 +1,9 @@
+{
+  "map_id": "loop-7x7-v1",
+  "agents": ["random", "q_learning", "dqn"],
+  "seeds": [11],
+  "max_steps": 30,
+  "pretrain_steps": 250,
+  "adapt_steps": 250,
+  "checkpoint_every": 125
+}
