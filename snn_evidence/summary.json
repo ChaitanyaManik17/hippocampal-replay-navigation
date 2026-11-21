@@ -1,0 +1,145 @@
+{
+  "kind": "real_snn_online_pilot_and_fixture_driven_diagnostic",
+  "config": {
+    "map_id": "corridor-v1",
+    "seeds": [
+      11,
+      17,
+      23
+    ],
+    "training_steps": 3000,
+    "max_steps": 75,
+    "checkpoint_every": 500,
+    "evaluation_rollouts": 10,
+    "model": {
+      "decision_ms": 25,
+      "learning_ms": 25,
+      "membrane_tau_ms": 10.0,
+      "refractory_ms": 2,
+      "pair_tau_ms": 20.0,
+      "eligibility_tau_ms": 600.0,
+      "a_plus": 1.0,
+      "a_minus": 1.05,
+      "eligibility_limit": 10.0,
+      "learning_rate": 0.015,
+      "recurrent_probability": 0.08,
+      "recurrent_initial": 0.12,
+      "recurrent_max": 0.6,
+      "readout_initial": 0.25,
+      "readout_max": 1.0,
+      "place_drive": 2.0,
+      "teaching_drive": 4.0,
+      "excitatory_to_inhibitory": 0.12,
+      "inhibitory_to_excitatory": 0.18,
+      "action_pool_size": 4,
+      "inhibitory_size": 4,
+      "epsilon_start": 0.8,
+      "epsilon_end": 0.1,
+      "epsilon_decay_steps": 2000
+    }
+  },
+  "runtime": {
+    "python": "3.14.4",
+    "numpy": "2.3.5"
+  },
+  "source_sha256": {
+    "snn_model.py": "7d3097f5e4877c4a10c3d4b4c092d16ba3dd75d7fb3c05dbb902b89ade4648ab",
+    "snn_diagnostics.py": "f68be7da4ad216d7768a5faf88a203707d885744fa2b41fd78ac4adf5a2e97aa",
+    "maze.py": "a8124b176f37e70552aa0dcd74eddb2f033bdc40512e5a208455be2728b6e4fa",
+    "parallel_fixtures.json": "fe58aeef03e5ab72202d744b85fc65fdf96a25370dd5dbdeba6b99a6f5e2302a"
+  },
+  "plasticity_cases": [
+    {
+      "id": "causal",
+      "pre_ms": 10,
+      "post_ms": 20,
+      "pulse_ms": 120,
+      "reward": 1,
+      "expected_delta_sign": 1,
+      "measured_delta": 0.007701256785488941,
+      "measured_sign": 1,
+      "passed": true
+    },
+    {
+      "id": "reverse",
+      "pre_ms": 20,
+      "post_ms": 10,
+      "pulse_ms": 120,
+      "reward": 1,
+      "expected_delta_sign": -1,
+      "measured_delta": -0.00808631962476336,
+      "measured_sign": -1,
+      "passed": true
+    },
+    {
+      "id": "zero-reward",
+      "pre_ms": 10,
+      "post_ms": 20,
+      "pulse_ms": 120,
+      "reward": 0,
+      "expected_delta_sign": 0,
+      "measured_delta": 0.0,
+      "measured_sign": 0,
+      "passed": true
+    },
+    {
+      "id": "late-reward",
+      "pre_ms": 10,
+      "post_ms": 20,
+      "pulse_ms": 720,
+      "reward": 1,
+      "expected_delta_sign": 1,
+      "measured_delta": 0.0028331340425634677,
+      "measured_sign": 1,
+      "passed": true
+    }
+  ],
+  "late_to_early_delta_ratio": 0.3678794411714446,
+  "pilot_seeds": [
+    {
+      "seed": 11,
+      "training_actions": 3000,
+      "offline_ms": 0,
+      "replay_updates": 0,
+      "training_episodes_including_cutoff": 194,
+      "training_successes": 193,
+      "initial_successes": 8,
+      "final_successes": 10,
+      "evaluation_rollouts_per_checkpoint": 10,
+      "final_success_rate": 1.0,
+      "final_mean_length_all_rollouts": 14.2
+    },
+    {
+      "seed": 17,
+      "training_actions": 3000,
+      "offline_ms": 0,
+      "replay_updates": 0,
+      "training_episodes_including_cutoff": 173,
+      "training_successes": 171,
+      "initial_successes": 2,
+      "final_successes": 10,
+      "evaluation_rollouts_per_checkpoint": 10,
+      "final_success_rate": 1.0,
+      "final_mean_length_all_rollouts": 16.9
+    },
+    {
+      "seed": 23,
+      "training_actions": 3000,
+      "offline_ms": 0,
+      "replay_updates": 0,
+      "training_episodes_including_cutoff": 203,
+      "training_successes": 202,
+      "initial_successes": 1,
+      "final_successes": 10,
+      "evaluation_rollouts_per_checkpoint": 10,
+      "final_success_rate": 1.0,
+      "final_mean_length_all_rollouts": 12.3
+    }
+  ],
+  "limitations": [
+    "One corridor, three seeds, online only; no replay benefit claim.",
+    "Spike-pair stimuli and guided diagnostic route are supplied fixtures.",
+    "Frozen pilot rollouts use the real LIF model; every failure remains in the denominator.",
+    "Cue-only recall performance and integrated stress assays are not measured by this pilot."
+  ]
+}
