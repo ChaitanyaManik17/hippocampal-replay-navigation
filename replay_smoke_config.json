@@ -1,0 +1,15 @@
+{
+  "map_id": "loop-7x7-v1",
+  "conditions": ["rest", "random", "ordered", "adaptive"],
+  "seeds": [11],
+  "max_steps": 30,
+  "pretrain_steps": 250,
+  "adapt_steps": 250,
+  "checkpoint_every": 125,
+  "replay_every": 50,
+  "replay_transitions": 40,
+  "snippet_length": 8,
+  "step_ms": 25,
+  "buffer_episodes": null,
+  "priority": {"success": 1.0, "rarity": 1.0, "recency": 1.0, "recency_tau": 5.0, "alpha": 1.0, "floor": 0.05}
+}

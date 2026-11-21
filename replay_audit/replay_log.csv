@@ -1,0 +1,38 @@
+condition,seed,session,environment_step,call_index,kind,source_episode,phase,start_time_index,end_time_index,length,observations,actions,rewards,terminated,truncated,priority,contiguous,duration_ms
+rest,0,0,0,0,rest,,,,,0,,,,,,,,600
+random,0,0,0,0,replay,blocked-detour,blocked,2,2,1,22,1,-0.005,0,0,,1,25
+random,0,0,0,1,replay,blocked-detour,blocked,9,9,1,33,0,-0.005,0,0,,1,25
+random,0,0,0,2,replay,blocked-detour,blocked,2,2,1,22,1,-0.005,0,0,,1,25
+random,0,0,0,3,replay,blocked-detour,blocked,10,10,1,26,0,-0.005,0,0,,1,25
+random,0,0,0,4,replay,short-route,original,0,0,1,8,3,-0.005,0,0,,1,25
+random,0,0,0,5,replay,blocked-detour,blocked,8,8,1,40,0,-0.005,0,0,,1,25
+random,0,0,0,6,replay,blocked-detour,blocked,2,2,1,22,1,-0.005,0,0,,1,25
+random,0,0,0,7,replay,blocked-detour,blocked,8,8,1,40,0,-0.005,0,0,,1,25
+random,0,0,0,8,replay,blocked-detour,blocked,5,5,1,37,3,-0.005,0,0,,1,25
+random,0,0,0,9,replay,blocked-detour,blocked,11,11,1,19,0,1.0,1,0,,1,25
+random,0,0,0,10,replay,blocked-detour,blocked,5,5,1,37,3,-0.005,0,0,,1,25
+random,0,0,0,11,replay,short-route,original,1,1,1,9,3,-0.005,0,0,,1,25
+random,0,0,0,12,replay,short-route,original,3,3,1,11,3,1.0,1,0,,1,25
+random,0,0,0,13,replay,blocked-detour,blocked,6,6,1,38,3,-0.005,0,0,,1,25
+random,0,0,0,14,replay,blocked-detour,blocked,10,10,1,26,0,-0.005,0,0,,1,25
+random,0,0,0,15,replay,blocked-detour,blocked,11,11,1,19,0,1.0,1,0,,1,25
+random,0,0,0,16,replay,blocked-detour,blocked,4,4,1,36,3,-0.005,0,0,,1,25
+random,0,0,0,17,replay,blocked-detour,blocked,8,8,1,40,0,-0.005,0,0,,1,25
+random,0,0,0,18,replay,blocked-detour,blocked,8,8,1,40,0,-0.005,0,0,,1,25
+random,0,0,0,19,replay,blocked-detour,blocked,7,7,1,39,3,-0.005,0,0,,1,25
+random,0,0,0,20,replay,wall-and-timeout,blocked,1,1,1,8,3,-0.005,0,1,,1,25
+random,0,0,0,21,replay,blocked-detour,blocked,10,10,1,26,0,-0.005,0,0,,1,25
+random,0,0,0,22,replay,blocked-detour,blocked,6,6,1,38,3,-0.005,0,0,,1,25
+random,0,0,0,23,replay,blocked-detour,blocked,0,0,1,8,1,-0.005,0,0,,1,25
+ordered,0,0,0,0,replay,blocked-detour,blocked,6,9,4,38 39 40 33,3 3 0 0,-0.005 -0.005 -0.005 -0.005,0 0 0 0,0 0 0 0,,1,100
+ordered,0,0,0,1,replay,blocked-detour,blocked,6,9,4,38 39 40 33,3 3 0 0,-0.005 -0.005 -0.005 -0.005,0 0 0 0,0 0 0 0,,1,100
+ordered,0,0,0,2,replay,blocked-detour,blocked,3,6,4,29 36 37 38,1 3 3 3,-0.005 -0.005 -0.005 -0.005,0 0 0 0,0 0 0 0,,1,100
+ordered,0,0,0,3,replay,blocked-detour,blocked,4,7,4,36 37 38 39,3 3 3 3,-0.005 -0.005 -0.005 -0.005,0 0 0 0,0 0 0 0,,1,100
+ordered,0,0,0,4,replay,blocked-detour,blocked,8,11,4,40 33 26 19,0 0 0 0,-0.005 -0.005 -0.005 1.0,0 0 0 1,0 0 0 0,,1,100
+ordered,0,0,0,5,replay,blocked-detour,blocked,7,10,4,39 40 33 26,3 0 0 0,-0.005 -0.005 -0.005 -0.005,0 0 0 0,0 0 0 0,,1,100
+adaptive,0,0,0,0,replay,blocked-detour,blocked,7,10,4,39 40 33 26,3 0 0 0,-0.005 -0.005 -0.005 -0.005,0 0 0 0,0 0 0 0,0.097478,1,100
+adaptive,0,0,0,1,replay,blocked-detour,blocked,6,9,4,38 39 40 33,3 3 0 0,-0.005 -0.005 -0.005 -0.005,0 0 0 0,0 0 0 0,0.097478,1,100
+adaptive,0,0,0,2,replay,blocked-detour,blocked,3,6,4,29 36 37 38,1 3 3 3,-0.005 -0.005 -0.005 -0.005,0 0 0 0,0 0 0 0,0.097478,1,100
+adaptive,0,0,0,3,replay,blocked-detour,blocked,4,7,4,36 37 38 39,3 3 3 3,-0.005 -0.005 -0.005 -0.005,0 0 0 0,0 0 0 0,0.097478,1,100
+adaptive,0,0,0,4,replay,blocked-detour,blocked,8,11,4,40 33 26 19,0 0 0 0,-0.005 -0.005 -0.005 1.0,0 0 0 1,0 0 0 0,0.097478,1,100
+adaptive,0,0,0,5,replay,blocked-detour,blocked,7,10,4,39 40 33 26,3 0 0 0,-0.005 -0.005 -0.005 -0.005,0 0 0 0,0 0 0 0,0.097478,1,100
