@@ -11,8 +11,11 @@ Commands (run from the repository root):
         Navigation scores from baseline_evaluation.csv, ScriptedRecall fixture
         scores, and the evidence figure. Recall rows are labeled synthetic.
 
-    python -m memory_evaluation navigation runs/replay_demo/evaluation.csv --output runs/nav
-        Score any rollout CSV in the experiment.EvaluationRow schema.
+    python -m memory_evaluation navigation runs/replay_demo/evaluation.csv --output runs/nav --max-steps 30
+        Score any rollout CSV in the experiment.EvaluationRow schema and save
+        tables plus navigation_curves.png. Baseline and replay runs are told
+        apart by the config.json the runner wrote beside the CSV (or --kind),
+        because both use the agent ID ``random`` with different meanings.
 
     python -m memory_evaluation assays --output runs/memory [--model module:factory]
         Recurrence, cue-noise, memory-load, route-similarity and interference
@@ -194,19 +197,104 @@ def seed_results(checkpoints: Sequence[Checkpoint], *, window: int = 3) -> list[
     return results
 
 
-def navigation_table(seeds: Sequence[dict], *, reference_agents: Iterable[str] = ("random",)) -> list[dict]:
-    """Agent-level table. Success pools rollouts across seeds (failures included)."""
-    reference_agents = set(reference_agents)
+@dataclass(frozen=True)
+class Series:
+    label: str
+    color: str
+    reference: bool = False  # True: no learning, so recovery is not applicable
+    dashes: tuple = ()        # distinct patterns keep coincident curves visible
+    marker: str = "o"
+
+
+@dataclass(frozen=True)
+class RunKind:
+    """How to label and score one rollout table.
+
+    The agent ID ``random`` means different things in the two kinds: a
+    non-learning random-action reference in baseline runs, and the random
+    transition replay condition in replay runs. Labels, colours and the
+    recovery rule therefore come from the run kind, never from the ID alone.
+    """
+    name: str
+    column: str
+    series: dict[str, Series]
+
+    def check(self, agents: Iterable[str]) -> None:
+        unknown = sorted(set(agents) - set(self.series))
+        if unknown:
+            raise ValueError(f"{self.name} run cannot contain agent(s) {unknown}; "
+                             f"expected a subset of {list(self.series)}")
+
+    def label(self, agent: str) -> str:
+        return self.series[agent].label
+
+    def order(self, agents: Iterable[str]) -> list[str]:
+        present = set(agents)
+        return [a for a in self.series if a in present]
+
+
+BASELINE = RunKind("baseline", "Agent", {
+    "q_learning": Series("Q-learning", "#2a78d6"),
+    "dqn": Series("DQN", "#eb6834"),
+    "random": Series("Random action", "#1baf7a", reference=True),
+})
+REPLAY = RunKind("replay", "Condition", {
+    "rest": Series("Silent rest", "#2a78d6", marker="o"),
+    "random": Series("Random replay", "#eb6834", dashes=(6, 2), marker="s"),
+    "ordered": Series("Ordered replay", "#1baf7a", dashes=(2, 2), marker="^"),
+    "adaptive": Series("Adaptive replay", "#eda100", dashes=(6, 2, 1, 2), marker="D"),
+})
+RUN_KINDS = {kind.name: kind for kind in (BASELINE, REPLAY)}
+
+
+def detect_run_kind(csv_path: Path, agents: Iterable[str], kind: str | None = None) -> RunKind:
+    """Decide whether a rollout table holds baseline or replay runs.
+
+    Order of evidence: an explicit ``kind``; the ``config.json`` the runner wrote
+    beside the CSV (``agents`` for experiment.py, ``conditions`` for
+    replay_runner.py); then agent IDs that occur in only one kind. ``random``
+    occurs in both, so a table whose only evidence is ``random`` is rejected.
+    """
+    agents = set(agents)
+    if kind is not None:
+        resolved = RUN_KINDS[kind]
+    else:
+        resolved = None
+        sidecar = Path(csv_path).with_name("config.json")
+        if sidecar.exists():
+            config = json.loads(sidecar.read_text(encoding="utf-8"))
+            if "conditions" in config and "agents" not in config:
+                resolved = REPLAY
+            elif "agents" in config and "conditions" not in config:
+                resolved = BASELINE
+        if resolved is None:
+            votes = {k.name for k in RUN_KINDS.values()
+                     for a in agents if a in k.series and sum(a in o.series for o in RUN_KINDS.values()) == 1}
+            if len(votes) != 1:
+                raise ValueError(
+                    f"cannot tell whether {csv_path} holds baseline or replay runs (agents {sorted(agents)}); "
+                    "pass --kind baseline or --kind replay")
+            resolved = RUN_KINDS[votes.pop()]
+    resolved.check(agents)
+    return resolved
+
+
+def navigation_table(seeds: Sequence[dict], *, kind: RunKind) -> list[dict]:
+    """Agent-level table. Success pools rollouts across seeds (failures included).
+
+    Recovery is N/A only for series the run kind marks as a reference.
+    """
+    kind.check(s["agent"] for s in seeds)
     table = []
-    for agent in sorted({s["agent"] for s in seeds}):
+    for agent in kind.order(s["agent"] for s in seeds):
         runs = [s for s in seeds if s["agent"] == agent]
-        row = {"agent": agent, "seeds": len(runs)}
+        row = {"run_kind": kind.name, "agent": agent, "label": kind.label(agent), "seeds": len(runs)}
         for label in ("original_final", "blocked_initial", "blocked_final"):
             successes = [s[f"{label}_successes"] for s in runs if s[f"{label}_successes"] is not None]
             rollouts = [s[f"{label}_rollouts"] for s in runs if s[f"{label}_rollouts"] is not None]
             row[f"{label}_success"] = sum(successes) / sum(rollouts) if rollouts else None
             row[f"{label}_rollouts"] = sum(rollouts)
-        if agent in reference_agents:
+        if kind.series[agent].reference:
             row["recovered_seeds"] = None
             row["median_recovery_step"] = None
         else:
@@ -815,15 +903,17 @@ def write_csv(path: Path, rows: Sequence[dict]) -> None:
         writer.writerows(rows)
 
 
-def navigation_markdown(table: Sequence[dict], source: str) -> str:
+def navigation_markdown(table: Sequence[dict], source: str, kind: RunKind) -> str:
     lines = [
-        f"Source: {source}. Success pools every rollout across seeds; failures stay in the denominator.", "",
-        "| Agent | Seeds | Original final | Blocked initial | Blocked final | Recovered seeds | Median recovery step |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        f"Source: {source} ({kind.name} runs). Success pools every rollout across seeds; "
+        "failures stay in the denominator.", "",
+        f"| {kind.column} | ID | Seeds | Original final | Blocked initial | Blocked final "
+        "| Recovered seeds | Median recovery step |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for r in table:
         lines.append(
-            f"| {r['agent']} | {r['seeds']} | {_fmt(r['original_final_success'], True)} "
+            f"| {r['label']} | `{r['agent']}` | {r['seeds']} | {_fmt(r['original_final_success'], True)} "
             f"| {_fmt(r['blocked_initial_success'], True)} | {_fmt(r['blocked_final_success'], True)} "
             f"| {_fmt(r['recovered_seeds'])} | {_fmt(r['median_recovery_step'])} |")
     return "\n".join(lines) + "\n"
@@ -863,7 +953,6 @@ def memory_markdown(summary: Sequence[dict], cfg: AssayConfig) -> str:
     return "\n".join(lines) + "\n"
 
 
-SERIES = {"q_learning": ("Q-learning", "#2a78d6"), "dqn": ("DQN", "#eb6834"), "random": ("Random", "#1baf7a")}
 INK, MUTED, GRID = "#0b0b0b", "#52514e", "#e4e3df"
 
 
@@ -875,15 +964,15 @@ def _style(ax):
     ax.tick_params(colors=MUTED, labelsize=8)
 
 
-def plot_evidence(curves: Sequence[dict], recall_rows: Sequence[dict], path: Path, *, nav_source: str) -> None:
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    fig, axes = plt.subplots(1, 3, figsize=(13.5, 3.9), gridspec_kw={"width_ratios": [1, 1, 0.8]})
+def _plot_navigation_axes(axes, curves: Sequence[dict], kind: RunKind) -> dict[str, list[str]]:
+    """Draw original and blocked learning curves; return the labels drawn per phase."""
+    drawn: dict[str, list[str]] = {}
     for ax, phase, title in ((axes[0], "original", "Original maze"), (axes[1], "blocked", "Preferred route blocked")):
         ends = []
-        for agent, (label, color) in SERIES.items():
+        drawn[phase] = []
+        for agent in kind.order(c["agent"] for c in curves):
+            spec = kind.series[agent]
+            label, color = spec.label, spec.color
             pts = [c for c in curves if c["agent"] == agent and c["phase"] == phase]
             if not pts:
                 continue
@@ -892,8 +981,12 @@ def plot_evidence(curves: Sequence[dict], recall_rows: Sequence[dict], path: Pat
             sd = [p["sd_success"] for p in pts]
             ax.fill_between(x, [max(0, a - b) for a, b in zip(y, sd)], [min(1, a + b) for a, b in zip(y, sd)],
                             color=color, alpha=0.12, linewidth=0)
-            ax.plot(x, y, color=color, linewidth=2, label=label)
+            line, = ax.plot(x, y, color=color, linewidth=2, label=label,
+                            marker=spec.marker if len(x) < 8 else None, markersize=5, markerfacecolor="none")
+            if spec.dashes:
+                line.set_dashes(spec.dashes)
             ends.append([y[-1], f"{label} {100 * y[-1]:.0f}%", x[-1]])
+            drawn[phase].append(label)
         ends.sort(key=lambda e: e[0])
         for i in range(1, len(ends)):  # keep direct labels at least 0.08 apart
             ends[i][0] = max(ends[i][0], ends[i - 1][0] + 0.08)
@@ -903,10 +996,36 @@ def plot_evidence(curves: Sequence[dict], recall_rows: Sequence[dict], path: Pat
         ax.set_title(title, fontsize=10, color=INK, loc="left")
         ax.set_xlabel("Real maze actions in this phase", fontsize=8, color=MUTED)
         ax.set_ylim(-0.02, 1.12)
-        ax.set_xlim(right=ax.get_xlim()[1] * 1.22)
+        ax.set_xlim(right=ax.get_xlim()[1] * 1.3)
         _style(ax)
     axes[0].set_ylabel("Frozen goal success\n(mean ± SD across seeds)", fontsize=8, color=MUTED)
-    axes[0].legend(loc="lower right", fontsize=8, frameon=False)
+    axes[0].legend(loc="upper left", bbox_to_anchor=(0, -0.2), ncol=2, fontsize=8, frameon=False,
+                   handlelength=3)
+    return drawn
+
+
+def plot_navigation(curves: Sequence[dict], kind: RunKind, path: Path, *, source: str) -> dict[str, list[str]]:
+    """Two-panel learning-curve figure for any rollout table; returns the labels drawn."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(1, 2, figsize=(11, 3.9))
+    drawn = _plot_navigation_axes(axes, curves, kind)
+    fig.suptitle(f"Frozen navigation · {kind.name} runs · {source}", fontsize=9, color=MUTED, x=0.01, ha="left")
+    fig.tight_layout()
+    fig.savefig(path, dpi=160)
+    plt.close(fig)
+    return drawn
+
+
+def plot_evidence(curves: Sequence[dict], recall_rows: Sequence[dict], path: Path, *, nav_source: str) -> None:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(1, 3, figsize=(13.5, 3.9), gridspec_kw={"width_ratios": [1, 1, 0.8]})
+    _plot_navigation_axes(axes[:2], curves, BASELINE)
 
     ax = axes[2]
     names = [r["variant"] for r in recall_rows]
@@ -962,24 +1081,30 @@ def plot_assays(summary: Sequence[dict], path: Path) -> None:
 # =========================================================================== CLI
 
 
-def score_navigation(csv_path: Path, output: Path, *, max_steps: int | None, source: str) -> list[dict]:
+def score_navigation(csv_path: Path, output: Path, *, max_steps: int | None, source: str,
+                     kind: str | None = None, plot: bool = True) -> tuple[list[dict], RunKind]:
+    """Audit, score and write tables (and the learning-curve figure) for one rollout CSV."""
     rows = load_rollouts(csv_path)
+    run_kind = detect_run_kind(csv_path, {r["agent"] for r in rows}, kind)
     problems = audit_rollouts(rows, max_steps=max_steps)
     if problems:
         raise ValueError("rollout audit failed:\n" + "\n".join(problems[:20]))
     checkpoints = score_checkpoints(rows)
     seeds = seed_results(checkpoints)
-    table = navigation_table(seeds)
+    table = navigation_table(seeds, kind=run_kind)
     curves = learning_curves(checkpoints)
     output.mkdir(parents=True, exist_ok=True)
     write_csv(output / "navigation_checkpoints.csv",
               [{**asdict(c), "success_rate": c.success_rate} for c in checkpoints])
-    write_csv(output / "navigation_seeds.csv", seeds)
+    write_csv(output / "navigation_seeds.csv",
+              [{"run_kind": run_kind.name, "label": run_kind.label(s["agent"]), **s} for s in seeds])
     write_csv(output / "navigation_curves.csv", curves)
     (output / "navigation_table.md").write_text(
         f"Rollouts: {len(rows)}; checkpoints: {len(checkpoints)}; audit: passed.\n\n"
-        + navigation_markdown(table, source), encoding="utf-8")
-    return curves
+        + navigation_markdown(table, source, run_kind), encoding="utf-8")
+    if plot:
+        plot_navigation(curves, run_kind, output / "navigation_curves.png", source=source)
+    return curves, run_kind
 
 
 def _load_factory(spec: str):
@@ -997,7 +1122,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     nav.add_argument("csv", type=Path)
     nav.add_argument("--output", type=Path, required=True)
     nav.add_argument("--max-steps", type=int, default=None, help="check failures ran to this limit")
-    nav.add_argument("--source", default="rollout CSV")
+    nav.add_argument("--source", default=None, help="label for tables and figure (default: CSV name)")
+    nav.add_argument("--kind", choices=sorted(RUN_KINDS),
+                     help="baseline or replay; default reads config.json beside the CSV")
     asy = sub.add_parser("assays", help="memory sweeps")
     asy.add_argument("--output", type=Path, required=True)
     asy.add_argument("--model", help="module:factory returning a MemoryModel; default is the synthetic stand-in")
@@ -1006,7 +1133,8 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     if args.command == "evidence":
         source = f"{args.csv.name} (conventional RL baselines)"
-        curves = score_navigation(args.csv, args.output, max_steps=150, source=source)
+        curves, _ = score_navigation(args.csv, args.output, max_steps=150, source=source,
+                                     kind="baseline", plot=False)
         recall = score_fixture_recall()
         write_csv(args.output / "recall_fixture.csv", recall)
         plot_evidence(curves, recall, args.output / "scoring_evidence.png", nav_source=args.csv.name)
@@ -1014,7 +1142,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         for r in recall:
             print(f"[synthetic] {r['variant']}: {r['correct']}/{r['bins']} correct, {r['missed']} missed")
     elif args.command == "navigation":
-        score_navigation(args.csv, args.output, max_steps=args.max_steps, source=args.source)
+        score_navigation(args.csv, args.output, max_steps=args.max_steps,
+                         source=args.source or args.csv.name, kind=args.kind)
         print((args.output / "navigation_table.md").read_text(encoding="utf-8"))
     else:
         cfg = AssayConfig.from_json(args.config) if args.config else AssayConfig()

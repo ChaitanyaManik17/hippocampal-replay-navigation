@@ -7,12 +7,13 @@
 
 The input is any CSV in the `experiment.EvaluationRow` schema. `experiment.py` and `replay_runner.py` both write this format, so baselines and replay conditions go through the same code.
 
+- **Run kind.** The agent ID `random` means two different things. In baseline runs it is the non-learning random-action reference. In replay runs it is the random-transition replay condition. The evaluator decides which kind a CSV holds from the `config.json` the runner wrote next to it (`agents` from `experiment.py`, `conditions` from `replay_runner.py`). Without that file it uses IDs that appear in only one kind, and `--kind baseline|replay` sets it explicitly. A table whose only ID is `random` is rejected rather than guessed. Labels, plot styles and the recovery rule come from the run kind. Only the random-action baseline gets N/A for recovery; Random replay uses the same criterion as the other replay conditions.
 - **Audit first.** Before scoring, each row is checked against the evaluator's own BFS for its map phase and start. Successful rollouts must have efficiency = shortest / steps and can't be shorter than BFS. Failed rollouts must have no efficiency, and with a known action limit they must have run to it. Scoring stops if any row fails.
 - **Checkpoint success** = successes / rollouts over all starts. Timeouts stay in the denominator.
 - **Path efficiency** is averaged over successful rollouts only and reported separately, so an agent can't look efficient by failing.
 - **Learning curves** show the mean ± SD of per-seed checkpoint success against *real maze actions*. Offline replay time is never on this axis.
 - **Endpoints** are pooled over all rollouts of all seeds: original-final, blocked-initial (before any blocked training action) and blocked-final.
-- **Recovery** is the first blocked checkpoint that starts a run of three consecutive checkpoints with every start successful. Seeds that never meet this are reported as censored (`k/N recovered`), not dropped. The median is taken over recovered seeds only and labeled that way. Random is a reference agent, so recovery is reported as N/A.
+- **Recovery** is the first blocked checkpoint that starts a run of three consecutive checkpoints with every start successful. Seeds that never meet this are reported as censored (`k/N recovered`), not dropped. The median is taken over recovered seeds only and labeled that way. The random-action baseline is a non-learning reference, so its recovery is N/A.
 
 **Validation on the committed baseline.** All 4,500 rollouts (1,500 checkpoints) pass the audit. The scorer reproduces `baseline_report.md` and every per-seed recovery step in `baseline_summary.json`:
 
@@ -20,7 +21,7 @@ The input is any CSV in the `experiment.EvaluationRow` schema. `experiment.py` a
 | --- | ---: | ---: | ---: | ---: | ---: |
 | DQN | 100.0% | 0.0% | 70.0% | 7/10 | 3,500 |
 | Q-learning | 100.0% | 0.0% | 100.0% | 6/10 | 5,500 |
-| Random | 73.3% | 16.7% | 16.7% | N/A | N/A |
+| Random action | 73.3% | 16.7% | 16.7% | N/A | N/A |
 
 Source: `baseline_evaluation.csv`, conventional RL baselines on one layout.
 

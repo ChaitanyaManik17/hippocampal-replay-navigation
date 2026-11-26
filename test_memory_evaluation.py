@@ -6,11 +6,12 @@ from random import Random
 
 from maze import MOVES, GridMaze
 from memory_evaluation import (
-    AssayConfig, CueNoise, RecallTrial, ReplayAgentMemory, Route, TransitionTableMemory, audit_rollouts,
+    BASELINE, REPLAY, AssayConfig, CueNoise, RecallTrial, ReplayAgentMemory, Route, TransitionTableMemory, audit_rollouts,
     corrupt_cue, cue_channels, degradation_point, interference_scores, learning_curves, load_rollouts, main,
     navigation_table, overlap_measures, present_cue, run_assays, run_trial, sample_disjoint_routes,
     sample_overlapping_routes, score_checkpoints, score_fixture_recall, score_recall, seed_results,
-    summarize_assays, synthetic_factory, valid_continuations,
+    summarize_assays, synthetic_factory, valid_continuations, detect_run_kind, plot_navigation,
+    score_navigation,
 )
 from parallel_fixtures import FIXTURE_PATH, ScriptedRecall, TraceAgent
 
@@ -148,7 +149,7 @@ class NavigationScoringTest(unittest.TestCase):
         self.assertEqual(audit_rollouts(self.rows, max_steps=150), [])
 
     def test_committed_baseline_reproduces_reported_table(self):
-        table = {r["agent"]: r for r in navigation_table(self.seeds)}
+        table = {r["agent"]: r for r in navigation_table(self.seeds, kind=BASELINE)}
         self.assertAlmostEqual(table["random"]["blocked_final_success"], 5 / 30)
         self.assertEqual(table["q_learning"]["blocked_final_success"], 1.0)
         self.assertAlmostEqual(table["dqn"]["blocked_final_success"], 0.7)
@@ -189,6 +190,141 @@ class NavigationScoringTest(unittest.TestCase):
         rows = [rollout(s, 12 if s else 150, phase="blocked", step=step, shortest=12)
                 for step, s in ((0, 0), (250, 1), (500, 1), (750, 0))]
         self.assertIsNone(seed_results(score_checkpoints(rows))[0]["recovery_step"])
+
+
+def write_rollouts(directory, rows, config=None):
+    """Write rows in the EvaluationRow schema, plus the runner's config.json if given."""
+    import csv
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "evaluation.csv"
+    with path.open("w", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=list(rows[0]), lineterminator="\n")
+        writer.writeheader()
+        writer.writerows({**r, "path_efficiency": "" if r["path_efficiency"] is None else r["path_efficiency"]}
+                         for r in rows)
+    if config is not None:
+        (directory / "config.json").write_text(json.dumps(config))
+    return path
+
+
+def replay_rows(recovering=("random",)):
+    """One seed per replay condition on the loop maze. Every condition fails right
+    after the blockage; conditions in ``recovering`` then succeed from every start
+    at blocked checkpoints 125, 250 and 375, so they recover at step 125."""
+    starts = (("1:1", 4, 12), ("2:1", 5, 11), ("3:1", 6, 10))
+    rows = []
+    for agent in ("rest", "random", "ordered", "adaptive"):
+        for phase, step in (("original", 0), ("blocked", 0), ("blocked", 125), ("blocked", 250), ("blocked", 375)):
+            for start, original, blocked in starts:
+                shortest = blocked if phase == "blocked" else original
+                ok = phase == "blocked" and step > 0 and agent in recovering
+                rows.append(rollout(int(ok), shortest if ok else 30, seed=11, phase=phase, step=step,
+                                    start=start, shortest=shortest, agent=agent))
+    return rows
+
+
+class RunKindTest(unittest.TestCase):
+    """``random`` is a reference baseline in one kind and a replay condition in the other."""
+
+    def test_detection_from_runner_config_and_agent_ids(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            replay = write_rollouts(Path(tmp) / "r", replay_rows(), {"conditions": ["rest", "random", "ordered", "adaptive"]})
+            self.assertIs(detect_run_kind(replay, {"random"}), REPLAY)
+            base = write_rollouts(Path(tmp) / "b", [rollout(1, 4, agent="random")], {"agents": ["random"]})
+            self.assertIs(detect_run_kind(base, {"random"}), BASELINE)
+            bare = write_rollouts(Path(tmp) / "n", [rollout(1, 4, agent="random")])
+            with self.assertRaisesRegex(ValueError, "--kind"):
+                detect_run_kind(bare, {"random"})
+            self.assertIs(detect_run_kind(bare, {"random"}, "replay"), REPLAY)
+            self.assertIs(detect_run_kind(bare, {"random", "dqn"}), BASELINE)
+            self.assertIs(detect_run_kind(bare, {"random", "ordered"}), REPLAY)
+            with self.assertRaises(ValueError):
+                detect_run_kind(bare, {"dqn", "ordered"})
+            with self.assertRaisesRegex(ValueError, "cannot contain"):
+                detect_run_kind(replay, {"random", "dqn"})
+        self.assertIs(detect_run_kind(ROOT / "baseline_evaluation.csv", {"random", "q_learning", "dqn"}), BASELINE)
+
+    def test_random_replay_gets_recovery_but_random_action_baseline_does_not(self):
+        replay_seeds = seed_results(score_checkpoints(replay_rows(recovering=("random",))))
+        replay = {r["agent"]: r for r in navigation_table(replay_seeds, kind=REPLAY)}
+        self.assertEqual(replay["random"]["label"], "Random replay")
+        self.assertEqual((replay["random"]["recovered_seeds"], replay["random"]["median_recovery_step"]), ("1/1", 125))
+        for agent in ("rest", "ordered", "adaptive"):
+            self.assertEqual(replay[agent]["recovered_seeds"], "0/1")
+            self.assertIsNone(replay[agent]["median_recovery_step"])
+
+        baseline_seeds = seed_results(score_checkpoints(load_rollouts(ROOT / "baseline_evaluation.csv")))
+        baseline = {r["agent"]: r for r in navigation_table(baseline_seeds, kind=BASELINE)}
+        self.assertEqual(baseline["random"]["label"], "Random action")
+        self.assertIsNone(baseline["random"]["recovered_seeds"])
+        self.assertIsNone(baseline["random"]["median_recovery_step"])
+        self.assertEqual(baseline["dqn"]["recovered_seeds"], "7/10")
+
+    def test_same_random_rows_scored_both_ways(self):
+        seeds = seed_results(score_checkpoints(replay_rows(recovering=("random",))))
+        random_only = [s for s in seeds if s["agent"] == "random"]
+        self.assertEqual(navigation_table(random_only, kind=REPLAY)[0]["recovered_seeds"], "1/1")
+        self.assertIsNone(navigation_table(random_only, kind=BASELINE)[0]["recovered_seeds"])
+
+    def test_replay_plot_draws_all_four_conditions(self):
+        curves = learning_curves(score_checkpoints(replay_rows()))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "nav.png"
+            drawn = plot_navigation(curves, REPLAY, path, source="test")
+            self.assertGreater(path.stat().st_size, 0)
+        expected = ["Silent rest", "Random replay", "Ordered replay", "Adaptive replay"]
+        self.assertEqual(drawn, {"original": expected, "blocked": expected})
+
+    def test_baseline_plot_labels_random_as_action_reference(self):
+        curves = learning_curves(score_checkpoints(load_rollouts(ROOT / "baseline_evaluation.csv")))
+        with tempfile.TemporaryDirectory() as tmp:
+            drawn = plot_navigation(curves, BASELINE, Path(tmp) / "nav.png", source="test")
+        self.assertEqual(drawn["blocked"], ["Q-learning", "DQN", "Random action"])
+
+    def test_navigation_cli_writes_plot_and_replay_table(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            csv_path = write_rollouts(Path(tmp) / "run", replay_rows(),
+                                      {"conditions": ["rest", "random", "ordered", "adaptive"]})
+            out = Path(tmp) / "nav"
+            main(["navigation", str(csv_path), "--output", str(out), "--max-steps", "30"])
+            self.assertGreater((out / "navigation_curves.png").stat().st_size, 0)
+            table = (out / "navigation_table.md").read_text()
+            self.assertIn("| Random replay | `random` | 1 |", table)
+            self.assertNotIn("N/A | N/A |\n| Ordered", table)
+            self.assertIn("replay runs", table)
+            for name in ("navigation_checkpoints.csv", "navigation_seeds.csv", "navigation_curves.csv"):
+                self.assertTrue((out / name).exists())
+
+    def test_navigation_cli_baseline_keeps_random_action_na(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "nav"
+            main(["navigation", str(ROOT / "baseline_evaluation.csv"), "--output", str(out), "--max-steps", "150"])
+            table = (out / "navigation_table.md").read_text()
+            self.assertIn("| Random action | `random` | 10 | 73.3% | 16.7% | 16.7% | N/A | N/A |", table)
+            self.assertIn("| DQN | `dqn` | 10 | 100.0% | 0.0% | 70.0% | 7/10 | 3500 |", table)
+            self.assertTrue((out / "navigation_curves.png").exists())
+
+
+class ReplaySmokeRunTest(unittest.TestCase):
+    """End to end on a fresh CSV from Dwiti's replay runner (TraceAgent stand-in)."""
+
+    def test_fresh_smoke_run_reports_all_four_conditions(self):
+        from replay_runner import ReplayRunConfig, run, trace_factory
+        config = ReplayRunConfig(**json.loads((ROOT / "replay_smoke_config.json").read_text()))
+        with tempfile.TemporaryDirectory() as tmp:
+            csv_path = run(config, Path(tmp) / "smoke", trace_factory)
+            out = Path(tmp) / "nav"
+            curves, kind = score_navigation(csv_path, out, max_steps=config.max_steps, source="smoke")
+            self.assertIs(kind, REPLAY)
+            self.assertGreater((out / "navigation_curves.png").stat().st_size, 0)
+            drawn = plot_navigation(curves, kind, Path(tmp) / "again.png", source="smoke")
+            table = (out / "navigation_table.md").read_text()
+        expected = ["Silent rest", "Random replay", "Ordered replay", "Adaptive replay"]
+        self.assertEqual(drawn, {"original": expected, "blocked": expected})
+        for label in expected:
+            row = next(line for line in table.splitlines() if line.startswith(f"| {label} |"))
+            self.assertIn("| 0/1 |", row)  # recovery computed (stand-in never recovers), not N/A
 
 
 class AssayTest(unittest.TestCase):
