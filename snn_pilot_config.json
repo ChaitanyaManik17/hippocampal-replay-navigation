@@ -1,0 +1,9 @@
+{
+  "map_id": "corridor-v1",
+  "seeds": [11, 17, 23],
+  "training_steps": 3000,
+  "max_steps": 75,
+  "checkpoint_every": 500,
+  "evaluation_rollouts": 10,
+  "model": {}
+}

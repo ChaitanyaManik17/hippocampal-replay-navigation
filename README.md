@@ -34,6 +34,21 @@ python -m analysis runs/full/evaluation.csv --output runs/full
 
 Regenerate the figure directly from the committed rollout data with `python -m analysis baseline_evaluation.csv --output runs/replot`.
 
+## Ketan's spiking model (Task 2)
+
+`snn_model.py` implements the LIF model, reward-gated STDP, replay/rest boundary, and frozen cue-only probe. See the [model report](snn_report.md), [diagnostic](snn_evidence/spike_plasticity_diagnostic.png), and [seed-level evidence](snn_evidence/summary.json). The online corridor pilot uses three fixed seeds and retains all failed evaluations.
+
+For standalone model work, Python 3.12+ with the smaller dependency file is sufficient; PyTorch is only needed for the existing DQN tests. The committed SNN evidence was generated on macOS arm64 with Python 3.14.4 and NumPy 2.3.5.
+
+```bash
+python -m pip install -r requirements-snn.txt
+python -m unittest test_snn_model test_parallel_fixtures test_replay -v
+python -m snn_diagnostics --config snn_pilot_config.json --output runs/snn_pilot
+python -m replay_runner --config replay_smoke_config.json --agent snn_model:make_agent --output runs/snn_replay_smoke
+```
+
+The last command checks the real model with all four replay conditions and route blockage. Its small budget is an integration check, not a replay performance study. For frozen rollouts use `agent.evaluation_copy()` and call `begin_episode()` on that copy before each rollout. `recall()` isolates its own state automatically.
+
 ## Repository contents
 
 | File | Purpose |
@@ -44,5 +59,9 @@ Regenerate the figure directly from the committed rollout data with `python -m a
 | `analysis.py` | Rollout aggregation, per-seed recovery summary, and plot generation. |
 | `blocked_route_config.json` | Exact experiment configuration for the committed results. |
 | `test_maze_and_experiment.py` | Environment, learning, and experiment regression tests. |
+| `snn_model.py` | Place-coded recurrent LIF agent, inhibitory pool, action pools, eligibility traces, frozen recall. |
+| `test_snn_model.py` | Spike-pair acceptance, evaluation isolation, replay accounting, and real runner handoff tests. |
+| `snn_diagnostics.py`, `snn_pilot_config.json` | Reproducible spike/plasticity diagnostic and three-seed online corridor pilot. |
+| `snn_report.md`, `snn_evidence/` | Model methods, stability/limitations, raw pilot outcomes, and diagnostic figure. |
 
-The recorded results cover conventional baselines. The CA3-inspired SNN, team replay scheduler, and cue-recall assays are separate teammate deliverables. DQN uses conventional experience replay internally.
+The baseline results above cover conventional agents; the SNN pilot is reported separately. The recurrent SNN and replay scheduler are implemented. Integrated replay comparisons and cue-noise, memory-load, route-similarity, and retention assays remain shared team work. DQN uses conventional experience replay internally.

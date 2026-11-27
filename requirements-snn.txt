@@ -1,0 +1,3 @@
+# Standalone Task 2 model, tests, pilot, and diagnostic (no PyTorch needed).
+numpy==2.3.5
+matplotlib==3.10.8
